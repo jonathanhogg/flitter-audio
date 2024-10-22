@@ -1,0 +1,62 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "flitter-audio"
+version = "1.0"
+description = "An audio plugin for flitter-lang"
+authors = [
+  {name = "Jonathan Hogg", email = "me@jonathanhogg.com"},
+]
+maintainers = [
+  {name = "Jonathan Hogg", email = "me@jonathanhogg.com"},
+]
+readme = "README.md"
+license = {file="LICENSE"}
+keywords = ["language", "audio", "live-coding", "live-visuals"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: BSD License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Environment :: Console",
+  "Environment :: GPU",
+  "Environment :: MacOS X",
+  "Environment :: X11 Applications",
+  "Topic :: Artistic Software",
+  "Topic :: Multimedia :: Graphics",
+  "Topic :: Multimedia :: Graphics :: 3D Rendering",
+]
+requires-python = ">= 3.10"
+dependencies = [
+    "aiohttp",
+    "aiortc",
+    "av",
+    "cryptography",
+    "flitter-lang",
+    "loguru",
+]
+
+[project.urls]
+Documentation = "https://flitter.readthedocs.io/"
+Repository = "https://github.com/jonathanhogg/flitter-audio.git"
+Issues = "https://github.com/jonathanhogg/flitter-audio/issues"
+
+[project.entry-points."flitter.render"]
+audio = "flitter_audio.device:AudioDevice"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"*" = ["*.lark", "*.pxd", "*.glsl", "*.frag", "*.vert"]
+
+[tool.cibuildwheel]
+skip = ["pp*", "*_i686", "*-win32"]
+
+[tool.cython-lint]
+max-line-length = 160
