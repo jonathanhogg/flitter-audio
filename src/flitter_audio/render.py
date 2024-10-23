@@ -3,7 +3,6 @@ import asyncio
 
 import av
 from loguru import logger
-import numpy as np
 import pyaudio
 
 from flitter.clock import system_clock
@@ -55,6 +54,7 @@ class Player:
         time_base = input_stream.time_base
         decoder = None
         frame = None
+        frame_start = None
         output_stream = None
         try:
             while True:
@@ -114,7 +114,7 @@ class Player:
                     await asyncio.sleep(float(frame_duration * time_base / 3))
         except asyncio.CancelledError:
             pass
-        except Exception as exc:
+        except Exception:
             logger.exception("Unexpected error playing audio: {}", self._filename)
         logger.debug("Stoppping audio player for: {}", self._filename)
         self._data = None
