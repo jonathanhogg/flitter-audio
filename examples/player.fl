@@ -1,0 +1,5 @@
+
+%pragma tempo 60
+
+!audio
+    !sample filename='clock-strike.wav' loop=true position=beat volume=0.5

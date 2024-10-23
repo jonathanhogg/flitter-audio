@@ -33,12 +33,11 @@ classifiers = [
 ]
 requires-python = ">= 3.10"
 dependencies = [
-    "aiohttp",
-    "aiortc",
     "av",
-    "cryptography",
     "flitter-lang",
     "loguru",
+    "numpy",
+    "pyaudio",
 ]
 
 [project.urls]
@@ -47,7 +46,7 @@ Repository = "https://github.com/jonathanhogg/flitter-audio.git"
 Issues = "https://github.com/jonathanhogg/flitter-audio/issues"
 
 [project.entry-points."flitter.render"]
-audio = "flitter_audio.device:AudioDevice"
+audio = "flitter_audio.render:AudioRenderer"
 
 [tool.setuptools.packages.find]
 where = ["src"]
