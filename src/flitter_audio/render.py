@@ -5,6 +5,7 @@ import wave
 
 import av
 from loguru import logger
+import numpy as np
 import pyaudio
 
 from flitter.clock import system_clock
@@ -50,7 +51,8 @@ class WavPlayer:
             nchannels = wavfile.getnchannels()
             sample_rate = wavfile.getframerate()
             nframes = wavfile.getnframes()
-            format = {1: pyaudio.paInt8, 2: pyaudio.paInt16, 3: pyaudio.paInt24, 4: pyaudio.paFloat32}[width]
+            format = {1: pyaudio.paInt8, 2: pyaudio.paInt16, 4: pyaudio.paFloat32}[width]
+            dtype = {1: 'int8', 2: 'int16', 4: 'float32'}[width]
         except Exception:
             logger.exception("Cannot open audio file: {}", self._filename)
             return
@@ -87,6 +89,11 @@ class WavPlayer:
                     data = wavfile.readframes(buffer_size)
                     read_position += len(data) // (nchannels * width)
                     if read_position > position - buffer_size * self.BUFFERS:
+                        if self._volume < 1:
+                            n = len(data) // nchannels // width
+                            frame_array = np.ndarray(shape=(n, nchannels), buffer=data, dtype=dtype)
+                            frame_array = (frame_array * self._volume).astype(dtype)
+                            data = frame_array.tobytes()
                         await asyncio.to_thread(self._queue.put, data)
                 if output_stream is None:
                     logger.debug("Starting output stream for: {}", self._filename)
