@@ -22,8 +22,8 @@ PA_FORMATS = {
 
 
 class WavPlayer:
-    BUFFERS = 2
-    BUFFER_SIZE = 0.1
+    BUFFERS = 3
+    BUFFER_SIZE = 0.05
 
     def __init__(self, filename):
         self._filename = filename
