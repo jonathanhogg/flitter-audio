@@ -1,5 +1,7 @@
 
 import asyncio
+import queue
+import wave
 
 import av
 from loguru import logger
@@ -19,7 +21,102 @@ PA_FORMATS = {
 }
 
 
-class Player:
+class WavPlayer:
+    BUFFERS = 2
+    BUFFER_SIZE = 0.1
+
+    def __init__(self, filename):
+        self._filename = filename
+        self._volume = 1
+        self._start = None
+        self._loop = False
+        self._run_task = None
+        self._queue = queue.Queue(maxsize=self.BUFFERS+1)
+
+    async def start(self, PA, device_info):
+        self._run_task = asyncio.create_task(self.run(PA, device_info))
+        self._event_loop = asyncio.get_event_loop()
+
+    async def update(self, frame_time, volume, position, loop):
+        self._volume = volume
+        self._start = frame_time - position
+        self._loop = loop
+
+    async def run(self, PA, device_info):
+        try:
+            path = SharedCache[self._filename]
+            wavfile = wave.open(str(path._path), 'rb')
+            width = wavfile.getsampwidth()
+            nchannels = wavfile.getnchannels()
+            sample_rate = wavfile.getframerate()
+            nframes = wavfile.getnframes()
+            format = {1: pyaudio.paInt8, 2: pyaudio.paInt16, 3: pyaudio.paInt24, 4: pyaudio.paFloat32}[width]
+        except Exception:
+            logger.exception("Cannot open audio file: {}", self._filename)
+            return
+        logger.debug("Starting audio player for: {}", self._filename)
+        output_stream = None
+        read_position = 0
+        buffer_size = int(sample_rate * self.BUFFER_SIZE)
+        try:
+            while True:
+                position = int((system_clock() - self._start) * sample_rate)
+                if self._loop:
+                    position %= nframes
+                elif position < 0 or position > nframes:
+                    if output_stream is not None:
+                        output_stream.close()
+                        output_stream = None
+                        wavfile.rewind()
+                        read_position = 0
+                        self._queue = queue.Queue(maxsize=self.BUFFERS+1)
+                    await asyncio.sleep(self.BUFFER_SIZE)
+                    continue
+                if position < read_position - buffer_size:
+                    logger.debug("Rewind input stream for: {}", self._filename)
+                    wavfile.rewind()
+                    read_position = 0
+                if output_stream is not None and not output_stream.is_active():
+                    logger.debug("Time-out on output stream for: {}", self._filename)
+                    output_stream.close()
+                    output_stream = None
+                    wavfile.rewind()
+                    read_position = 0
+                    self._queue = queue.Queue(maxsize=self.BUFFERS+1)
+                while position >= read_position:
+                    data = wavfile.readframes(buffer_size)
+                    read_position += len(data) // (nchannels * width)
+                    if read_position > position - buffer_size * self.BUFFERS:
+                        await asyncio.to_thread(self._queue.put, data)
+                if output_stream is None:
+                    logger.debug("Starting output stream for: {}", self._filename)
+                    output_stream = PA.open(channels=nchannels, format=format, rate=sample_rate, frames_per_buffer=buffer_size,
+                                            output=True, output_device_index=device_info['index'], stream_callback=self._callback)
+                await asyncio.sleep(self.BUFFER_SIZE / 3)
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            logger.exception("Unexpected error playing audio: {}", self._filename)
+        logger.debug("Stopping audio player for: {}", self._filename)
+        if output_stream is not None:
+            while output_stream.is_active():
+                await asyncio.sleep(self.BUFFER_SIZE)
+            output_stream.close()
+        wavfile.close()
+
+    def _callback(self, data, frame_count, time_info, status_flags):
+        try:
+            return self._queue.get(timeout=self.BUFFER_SIZE / 2), pyaudio.paContinue
+        except queue.Empty:
+            return None, pyaudio.paComplete
+
+    async def stop(self):
+        if self._run_task is not None:
+            self._run_task.cancel()
+            await self._run_task
+
+
+class AvPlayer:
     def __init__(self, filename):
         self._filename = filename
         self._volume = 1
@@ -185,8 +282,11 @@ class AudioRenderer(Renderer):
                     if filename:
                         if filename in players:
                             player = players.pop(filename)
+                        elif filename.endswith('.wav'):
+                            player = WavPlayer(filename)
+                            await player.start(self.PA, self._device_info)
                         else:
-                            player = Player(filename)
+                            player = AvPlayer(filename)
                             await player.start(self.PA, self._device_info)
                         await player.update(time, volume, position, loop)
                         self._players[filename] = player
