@@ -94,15 +94,7 @@ class WavPlayer:
                             frame_array = np.ndarray(shape=(n, nchannels), buffer=data, dtype=dtype)
                             frame_array = (frame_array * self._volume).astype(dtype)
                             data = frame_array.tobytes()
-                        try:
-                            await asyncio.to_thread(self._queue.put, data, timeout=self.BUFFER_SIZE*self.BUFFERS)
-                        except queue.Full:
-                            logger.debug("Time-out on output stream for: {}", self._filename)
-                            output_stream.close()
-                            output_stream = None
-                            wavfile.rewind()
-                            read_position = 0
-                            self._queue = queue.Queue(maxsize=self.BUFFERS+1)
+                        await asyncio.to_thread(self._queue.put, data)
                 if output_stream is None:
                     logger.debug("Starting output stream for: {}", self._filename)
                     output_stream = PA.open(channels=nchannels, format=format, rate=sample_rate, frames_per_buffer=buffer_size,
