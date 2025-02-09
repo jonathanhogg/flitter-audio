@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "flitter-audio"
-version = "1.0"
+version = "1.1"
 description = "An audio plugin for flitter-lang"
 authors = [
   {name = "Jonathan Hogg", email = "me@jonathanhogg.com"},
