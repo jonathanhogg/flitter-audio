@@ -1,7 +1,5 @@
 
 import asyncio
-import queue
-import wave
 
 import av
 from loguru import logger
