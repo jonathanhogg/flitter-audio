@@ -24,6 +24,7 @@ class AvPlayer:
         self._volume = 1
         self._start = None
         self._loop = False
+        self._channels = None
         self._run_task = None
         self._resync = False
 
@@ -31,13 +32,16 @@ class AvPlayer:
         self._run_task = asyncio.create_task(self.run(PA, device_info))
         self._event_loop = asyncio.get_event_loop()
 
-    async def update(self, frame_time, volume, position, loop):
+    async def update(self, frame_time, volume, position, loop, channels):
         self._volume = volume
         start = frame_time - position
         if self._start is None or abs(start - self._start) > 0.1:
             self._start = start
             self._resync = True
         self._loop = loop
+        if channels != self._channels:
+            self._channels = channels
+            self._resync = True
 
     async def run(self, PA, device_info):
         try:
@@ -49,7 +53,7 @@ class AvPlayer:
             logger.exception("Cannot open audio file: {}", self._filename)
             return
         logger.debug("Starting audio player for: {}", self._filename)
-        nchannels = context.channels
+        input_nchannels = context.channels
         sample_rate = context.sample_rate
         start = input_stream.start_time or 0
         duration = input_stream.duration
@@ -57,8 +61,32 @@ class AvPlayer:
         time_base = input_stream.time_base
         decoder = None
         output_stream = None
+        output_channel_order = None
+        frame = None
         try:
             while True:
+                if self._resync:
+                    logger.trace("Resync stream: {}", self._filename)
+                    if decoder is not None:
+                        decoder.close()
+                        decoder = None
+                    if self._channels:
+                        new_output_channel_order = []
+                        for ch in self._channels:
+                            if 1 <= ch <= input_nchannels:
+                                new_output_channel_order.append(ch)
+                            else:
+                                new_output_channel_order.append(0)
+                    else:
+                        new_output_channel_order = list(range(1, input_nchannels+1))
+                    if new_output_channel_order != output_channel_order:
+                        if output_stream is not None:
+                            logger.trace("Channel order changed; closing output stream for: {}", self._filename)
+                            await asyncio.to_thread(output_stream.stop_stream)
+                            output_stream.close()
+                            output_stream = None
+                        output_channel_order = new_output_channel_order
+                        logger.trace("Channel order {} for: {}", ','.join(str(ch) for ch in output_channel_order), self._filename)
                 position = int((system_clock() - self._start) / time_base)
                 if self._loop:
                     timestamp = start + (position % duration)
@@ -66,7 +94,7 @@ class AvPlayer:
                     timestamp = start + position
                     if timestamp < start or timestamp > end:
                         if output_stream is not None:
-                            logger.trace("Closing output stream for: {}", self._filename)
+                            logger.trace("Position out of range; closing output stream for: {}", self._filename)
                             await asyncio.to_thread(output_stream.stop_stream)
                             output_stream.close()
                             output_stream = None
@@ -82,52 +110,57 @@ class AvPlayer:
                         if remaining < 0.2:
                             await asyncio.sleep(remaining)
                             continue
-                    logger.trace("Seek input stream: {}", self._filename)
                     if timestamp < 0.1 / time_base:
+                        logger.trace("Rewind input stream: {}", self._filename)
                         container.seek(0)
                     else:
+                        logger.trace("Seek input stream to {:.1f}s: {}", timestamp * time_base, self._filename)
                         container.seek(timestamp, stream=input_stream)
                     decoder = container.decode(streams=(input_stream.index,))
-                try:
-                    frame = next(decoder)
-                except StopIteration:
-                    logger.trace("Hit end of input stream: {}", self._filename)
-                    if self._loop:
-                        if decoder is not None:
-                            decoder.close()
-                            decoder = None
-                    else:
-                        if output_stream is not None:
-                            logger.trace("Closing output stream for: {}", self._filename)
-                            await asyncio.to_thread(output_stream.stop_stream)
-                            output_stream.close()
-                            output_stream = None
-                    await asyncio.sleep(0.05)
+                    frame = None
+                if frame is None:
+                    try:
+                        frame = next(decoder)
+                    except StopIteration:
+                        logger.trace("Hit end of input stream: {}", self._filename)
+                        if self._loop:
+                            if decoder is not None:
+                                decoder.close()
+                                decoder = None
+                        else:
+                            if output_stream is not None:
+                                logger.trace("Closing output stream for: {}", self._filename)
+                                await asyncio.to_thread(output_stream.stop_stream)
+                                output_stream.close()
+                                output_stream = None
+                            await asyncio.sleep(0.1)
                     continue
-                else:
-                    frame_end = frame.pts + frame.samples / time_base / sample_rate
-                    if frame_end < timestamp:
-                        continue
-                    frame_array = frame.to_ndarray()
-                    if len(frame_array.shape) == 2 and frame_array.shape[0] == nchannels:
-                        frame_array = frame_array.transpose()
-                    elif len(frame_array.shape) != 2 or frame_array.shape[1] != nchannels:
-                        frame_array = frame_array.reshape((-1, nchannels))
-                    if self._volume < 1:
-                        frame_array = (frame_array * self._volume).astype(frame_array.dtype)
-                    if output_stream is None:
-                        logger.trace("Opening output stream for: {}", self._filename)
-                        output_stream = PA.open(channels=nchannels, format=PA_FORMATS[frame_array.dtype],
-                                                rate=sample_rate, frames_per_buffer=sample_rate//10,
-                                                output=True, output_device_index=device_info['index'])
-                    while output_stream.get_write_available() < frame_array.shape[0]:
-                        await asyncio.sleep(0.05)
-                    output_stream.write(frame_array.tobytes())
-                if self._resync:
-                    logger.trace("Resync stream: {}", self._filename)
-                    if decoder is not None:
-                        decoder.close()
-                        decoder = None
+                frame_end = frame.pts + frame.samples / time_base / sample_rate
+                if frame_end < timestamp:
+                    frame = None
+                    continue
+                frame_array = frame.to_ndarray()
+                if len(frame_array.shape) == 2 and frame_array.shape[0] == input_nchannels:
+                    frame_array = frame_array.T
+                elif len(frame_array.shape) != 2 or frame_array.shape[1] != input_nchannels:
+                    frame_array = frame_array.reshape((-1, input_nchannels))
+                nframes = frame_array.shape[0]
+                output_array = np.zeros((nframes, len(output_channel_order)), dtype=frame_array.dtype)
+                for outch, inch in enumerate(output_channel_order):
+                    if inch:
+                        if self._volume < 1:
+                            output_array[:, outch] = frame_array[:, inch-1] * self._volume
+                        else:
+                            output_array[:, outch] = frame_array[:, inch-1]
+                if output_stream is None:
+                    logger.trace("Opening output stream for: {}", self._filename)
+                    output_stream = PA.open(channels=len(output_channel_order), format=PA_FORMATS[output_array.dtype],
+                                            rate=sample_rate, frames_per_buffer=sample_rate//10,
+                                            output=True, output_device_index=device_info['index'])
+                while output_stream.get_write_available() < output_array.shape[0]:
+                    await asyncio.sleep(0.01)
+                output_stream.write(output_array.tobytes())
+                frame = None
         except asyncio.CancelledError:
             pass
         except Exception:
@@ -202,13 +235,15 @@ class AudioRenderer(Renderer):
                     volume = child.get('volume', 1, float, 1)
                     position = child.get('position', 1, float, 0)
                     loop = child.get('loop', 1, bool, False)
+                    channels = child.get('channels', 0, int)
                     if filename:
                         if audio_id in players:
                             player = players.pop(audio_id)
+                            await player.update(time, volume, position, loop, channels)
                         else:
                             player = AvPlayer(filename)
+                            await player.update(time, volume, position, loop, channels)
                             await player.start(self.PA, self._device_info)
-                        await player.update(time, volume, position, loop)
                         self._players[audio_id] = player
             for player in players.values():
                 await player.stop()
