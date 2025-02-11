@@ -63,6 +63,7 @@ class AvPlayer:
         output_stream = None
         output_channel_order = None
         frame = None
+        max_channels = device_info['maxOutputChannels']
         try:
             while True:
                 if self._resync:
@@ -79,6 +80,10 @@ class AvPlayer:
                                 new_output_channel_order.append(0)
                     else:
                         new_output_channel_order = list(range(1, input_nchannels+1))
+                    nchannels = len(new_output_channel_order)
+                    if nchannels > max_channels:
+                        logger.warning("Device {} does not support {} channels; truncating", device_info['name'], nchannels)
+                        new_output_channel_order = new_output_channel_order[:max_channels]
                     if new_output_channel_order != output_channel_order:
                         if output_stream is not None:
                             logger.trace("Channel order changed; closing output stream for: {}", self._filename)
